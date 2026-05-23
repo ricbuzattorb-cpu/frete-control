@@ -1,0 +1,733 @@
+import { useState, useMemo, useRef, useCallback } from "react";
+
+// ─── Centros de custo padrão (departamento + filial) ────────────────────────
+const CC_INICIAIS = [
+  { id:"cc1",  codigo:"1100", nome:"Compras",           filial:"Matriz SP",    orcamento:8000  },
+  { id:"cc2",  codigo:"1200", nome:"Vendas",            filial:"Matriz SP",    orcamento:12000 },
+  { id:"cc3",  codigo:"1300", nome:"Logística",         filial:"Matriz SP",    orcamento:15000 },
+  { id:"cc4",  codigo:"2100", nome:"Compras",           filial:"Filial RJ",    orcamento:4000  },
+  { id:"cc5",  codigo:"2200", nome:"Vendas",            filial:"Filial RJ",    orcamento:6000  },
+  { id:"cc6",  codigo:"3100", nome:"Compras",           filial:"Filial PR",    orcamento:3000  },
+  { id:"cc7",  codigo:"3300", nome:"Logística",         filial:"Filial PR",    orcamento:5000  },
+];
+
+const TIPOS_DESPESA = [
+  { id:"frete_compra",   label:"Frete de Compra (entrada)",     cor:"#3b82f6" },
+  { id:"frete_venda",    label:"Frete de Venda (saída)",        cor:"#22c55e" },
+  { id:"transferencia",  label:"Transferência entre Filiais",   cor:"#8b5cf6" },
+  { id:"devolucao",      label:"Devolução",                     cor:"#f59e0b" },
+];
+
+const DEMO_FRETES = [
+  { id:1,  nf:"NF-001234", chaveNFe:"35240100000000000000550010000012341000012341", tipo:"emitida",  transportadora:"Rápido Log",   modalidade:"CIF", origem:"São Paulo, SP",      destino:"Rio de Janeiro, RJ", valorNF:45000, valorFrete:1200, peso:850,  prazo:"2024-01-15", entrega:"2024-01-15", status:"entregue",   orcamento:1000, mes:"2024-01", chaveCTe:null,
+    rateios:[{ ccId:"cc2", pct:100, tipoDespesa:"frete_venda"   }] },
+  { id:2,  nf:"NF-001235", chaveNFe:"35240100000000000000550010000012351000012351", tipo:"recebida", transportadora:"TransBrasil",  modalidade:"FOB", origem:"Curitiba, PR",       destino:"São Paulo, SP",      valorNF:32000, valorFrete:980,  peso:620,  prazo:"2024-01-18", entrega:"2024-01-20", status:"entregue",   orcamento:900,  mes:"2024-01", chaveCTe:null,
+    rateios:[{ ccId:"cc1", pct:100, tipoDespesa:"frete_compra"  }] },
+  { id:3,  nf:"NF-001236", chaveNFe:null,                                           tipo:"emitida",  transportadora:"Rápido Log",   modalidade:"CIF", origem:"São Paulo, SP",      destino:"Belo Horizonte, MG", valorNF:28000, valorFrete:850,  peso:480,  prazo:"2024-02-05", entrega:"2024-02-05", status:"entregue",   orcamento:800,  mes:"2024-02", chaveCTe:null,
+    rateios:[{ ccId:"cc2", pct:60,  tipoDespesa:"frete_venda"   }, { ccId:"cc5", pct:40, tipoDespesa:"frete_venda" }] },
+  { id:4,  nf:"NF-001237", chaveNFe:null,                                           tipo:"recebida", transportadora:"Expresso Sul", modalidade:"FOB", origem:"Porto Alegre, RS",   destino:"São Paulo, SP",      valorNF:67000, valorFrete:2100, peso:1200, prazo:"2024-02-12", entrega:"2024-02-14", status:"entregue",   orcamento:1800, mes:"2024-02", chaveCTe:null,
+    rateios:[{ ccId:"cc1", pct:50,  tipoDespesa:"frete_compra"  }, { ccId:"cc6", pct:50, tipoDespesa:"frete_compra" }] },
+  { id:5,  nf:"NF-001238", chaveNFe:null,                                           tipo:"emitida",  transportadora:"Norte Frete",  modalidade:"CIF", origem:"São Paulo, SP",      destino:"Manaus, AM",         valorNF:89000, valorFrete:4500, peso:2100, prazo:"2024-03-08", entrega:null,         status:"em_transito", orcamento:4000, mes:"2024-03", chaveCTe:null,
+    rateios:[{ ccId:"cc3", pct:100, tipoDespesa:"transferencia" }] },
+  { id:6,  nf:"NF-001239", chaveNFe:null,                                           tipo:"recebida", transportadora:"TransBrasil",  modalidade:"CIF", origem:"Recife, PE",         destino:"São Paulo, SP",      valorNF:54000, valorFrete:1850, peso:930,  prazo:"2024-03-15", entrega:"2024-03-16", status:"entregue",   orcamento:1600, mes:"2024-03", chaveCTe:null,
+    rateios:[{ ccId:"cc1", pct:70,  tipoDespesa:"frete_compra"  }, { ccId:"cc4", pct:30, tipoDespesa:"frete_compra" }] },
+  { id:7,  nf:"NF-001240", chaveNFe:null,                                           tipo:"emitida",  transportadora:"Rápido Log",   modalidade:"FOB", origem:"São Paulo, SP",      destino:"Fortaleza, CE",      valorNF:41000, valorFrete:2200, peso:760,  prazo:"2024-04-02", entrega:"2024-04-05", status:"entregue",   orcamento:2000, mes:"2024-04", chaveCTe:null,
+    rateios:[{ ccId:"cc2", pct:100, tipoDespesa:"devolucao"     }] },
+  { id:8,  nf:"NF-001241", chaveNFe:null,                                           tipo:"recebida", transportadora:"Expresso Sul", modalidade:"FOB", origem:"Florianópolis, SC",  destino:"São Paulo, SP",      valorNF:38000, valorFrete:1100, peso:540,  prazo:"2024-04-10", entrega:"2024-04-10", status:"entregue",   orcamento:1000, mes:"2024-04", chaveCTe:null,
+    rateios:[{ ccId:"cc7", pct:100, tipoDespesa:"transferencia" }] },
+];
+
+const MODALIDADES   = ["CIF","FOB"];
+const STATUS_OPTS   = ["entregue","em_transito","pendente","cancelado"];
+const fmtBRL  = v  => v?.toLocaleString("pt-BR",{style:"currency",currency:"BRL"}) ?? "—";
+const fmtPct  = v  => `${Number(v).toFixed(1)}%`;
+const fmtDate = d  => d ? new Date(d+"T12:00:00").toLocaleDateString("pt-BR") : "—";
+const statusLabel = {entregue:"Entregue",em_transito:"Em Trânsito",pendente:"Pendente",cancelado:"Cancelado"};
+const statusColor = {entregue:"#22c55e",em_transito:"#f59e0b",pendente:"#3b82f6",cancelado:"#ef4444"};
+const tipoDespesaInfo = td => TIPOS_DESPESA.find(t=>t.id===td) || {label:td,cor:"#64748b"};
+
+function emptyForm() {
+  return {nf:"",tipo:"emitida",transportadora:"",modalidade:"CIF",origem:"",destino:"",valorNF:"",valorFrete:"",peso:"",prazo:"",entrega:"",status:"pendente",orcamento:"",mes:new Date().toISOString().slice(0,7),rateios:[]};
+}
+
+// ── Parsers XML (mantidos) ───────────────────────────────────────────────────
+function parseXML(x){return new DOMParser().parseFromString(x,"application/xml");}
+function getTag(doc,tag){const e=doc.getElementsByTagName(tag)[0];return e?e.textContent.trim():null;}
+function getAttr(doc,tag,attr){const e=doc.getElementsByTagName(tag)[0];return e?e.getAttribute(attr):null;}
+function ufCodigo(c){return({"11":"RO","12":"AC","13":"AM","14":"RR","15":"PA","16":"AP","17":"TO","21":"MA","22":"PI","23":"CE","24":"RN","25":"PB","26":"PE","27":"AL","28":"SE","29":"BA","31":"MG","32":"ES","33":"RJ","35":"SP","41":"PR","42":"SC","43":"RS","50":"MS","51":"MT","52":"GO","53":"DF"})[c]||c;}
+function parsearNFe(xmlStr){try{const doc=parseXML(xmlStr);if(!doc.getElementsByTagName("NFe")[0]&&!doc.getElementsByTagName("nfeProc")[0])return{erro:"Não é NF-e"};const chave=getTag(doc,"chNFe")||getAttr(doc,"infNFe","Id")?.replace("NFe","");const mes=(getTag(doc,"dhEmi")||getTag(doc,"dEmi")||"").substring(0,7);return{tipo_doc:"nfe",chaveNFe:chave,nf:`NF-${getTag(doc,"serie")||"0"}-${getTag(doc,"nNF")||"?"}`,tipo:"emitida",transportadora:(doc.getElementsByTagName("transporta")[0]?.getElementsByTagName("xNome")[0]?.textContent)||"Não informada",modalidade:getTag(doc,"modFrete")==="1"?"FOB":"CIF",origem:(getTag(doc,"xMun")||"")+" "+ufCodigo(chave?.substring(0,2)||""),destino:"",valorNF:parseFloat(getTag(doc,"vNF")||"0"),valorFrete:parseFloat(getTag(doc,"vFrete")||"0"),peso:parseFloat(getTag(doc,"pesoB")||getTag(doc,"pesoL")||"0"),mes:mes||new Date().toISOString().slice(0,7),status:"pendente",prazo:"",entrega:"",orcamento:0,chaveCTe:null,rateios:[]};}catch(e){return{erro:"Falha NF-e: "+e.message};}}
+function parsearCTe(xmlStr){try{const doc=parseXML(xmlStr);if(!doc.getElementsByTagName("CTe")[0]&&!doc.getElementsByTagName("cteProc")[0])return{erro:"Não é CT-e"};const chave=getTag(doc,"chCTe")||getAttr(doc,"infCte","Id")?.replace("CTe","");const nfRefs=[...Array.from(doc.getElementsByTagName("chave")).map(e=>e.textContent.trim()),...Array.from(doc.getElementsByTagName("infNFe")).map(e=>e.getElementsByTagName("chave")[0]?.textContent||e.getAttribute("chave")).filter(Boolean)];return{tipo_doc:"cte",chaveCTe:chave,nCT:`CT-e ${getTag(doc,"serie")||"0"}-${getTag(doc,"nCT")||"?"}`,transportadora:getTag(doc,"xNome")||"Transportadora",origem:(getTag(doc,"xMunIni")||"")+", "+(getTag(doc,"UFIni")||""),destino:(getTag(doc,"xMunFim")||"")+", "+(getTag(doc,"UFFim")||""),valorFrete:parseFloat(getTag(doc,"vTPrest")||getTag(doc,"vRec")||"0"),peso:parseFloat(getTag(doc,"pesoB")||getTag(doc,"qCarga")||"0"),mes:(getTag(doc,"dhEmi")||getTag(doc,"dEmi")||"").substring(0,7)||new Date().toISOString().slice(0,7),nfesReferenciadas:[...new Set(nfRefs)]};}catch(e){return{erro:"Falha CT-e: "+e.message};}}
+function detectarTipoXML(x){if(x.includes("<NFe")||x.includes("<nfeProc"))return"nfe";if(x.includes("<CTe")||x.includes("<cteProc"))return"cte";return"desconhecido";}
+
+// ─── APP ─────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [fretes,    setFretes]    = useState(DEMO_FRETES);
+  const [centros,   setCentros]   = useState(CC_INICIAIS);
+  const [aba,       setAba]       = useState("dashboard");
+  const [modalAberto, setModalAberto] = useState(false);
+  const [editandoId,  setEditandoId]  = useState(null);
+  const [filtroMes,   setFiltroMes]   = useState("todos");
+  const [filtroTipo,  setFiltroTipo]  = useState("todos");
+  const [filtroCC,    setFiltroCC]    = useState("todos");
+  const [filtroDespesa, setFiltroDespesa] = useState("todos");
+  const [busca,       setBusca]       = useState("");
+  const [orcGlobal,   setOrcGlobal]   = useState(50000);
+  const [form,        setForm]        = useState(emptyForm());
+
+  /* rateio temporário no form */
+  const [rateioTemp, setRateioTemp] = useState([]);
+
+  const fretesVisiveis = useMemo(()=>fretes.filter(f=>{
+    if(filtroMes!=="todos"&&f.mes!==filtroMes)return false;
+    if(filtroTipo!=="todos"&&f.tipo!==filtroTipo)return false;
+    if(filtroCC!=="todos"&&!f.rateios?.some(r=>r.ccId===filtroCC))return false;
+    if(filtroDespesa!=="todos"&&!f.rateios?.some(r=>r.tipoDespesa===filtroDespesa))return false;
+    if(busca&&!f.nf.toLowerCase().includes(busca.toLowerCase())&&!f.transportadora.toLowerCase().includes(busca.toLowerCase()))return false;
+    return true;
+  }),[fretes,filtroMes,filtroTipo,filtroCC,filtroDespesa,busca]);
+
+  /* KPIs globais */
+  const kpis = useMemo(()=>{
+    const todos=fretesVisiveis;
+    const totalFrete=todos.reduce((a,f)=>a+(f.valorFrete||0),0);
+    const totalPeso=todos.reduce((a,f)=>a+(f.peso||0),0);
+    const entregues=todos.filter(f=>f.status==="entregue");
+    const atrasados=entregues.filter(f=>f.entrega&&f.prazo&&f.entrega>f.prazo);
+    const ontimeRate=entregues.length?((entregues.length-atrasados.length)/entregues.length*100).toFixed(1):0;
+    const acimOrc=todos.filter(f=>f.valorFrete>f.orcamento&&f.orcamento>0);
+    const porTransp={};todos.forEach(f=>{porTransp[f.transportadora]=(porTransp[f.transportadora]||0)+(f.valorFrete||0);});
+    const porMes={};fretes.forEach(f=>{porMes[f.mes]=(porMes[f.mes]||0)+(f.valorFrete||0);});
+    /* por centro de custo */
+    const porCC={};
+    todos.forEach(f=>(f.rateios||[]).forEach(r=>{
+      const val=(f.valorFrete||0)*(r.pct/100);
+      porCC[r.ccId]=(porCC[r.ccId]||0)+val;
+    }));
+    /* por tipo despesa */
+    const porTipo={};
+    todos.forEach(f=>(f.rateios||[]).forEach(r=>{
+      const val=(f.valorFrete||0)*(r.pct/100);
+      porTipo[r.tipoDespesa]=(porTipo[r.tipoDespesa]||0)+val;
+    }));
+    return{totalFrete,totalPeso,ontimeRate,acimOrc,custoPorNF:todos.length?totalFrete/todos.length:0,custoPorKg:totalPeso?totalFrete/totalPeso:0,porTransp,porMes,porCC,porTipo,totalNFs:todos.length};
+  },[fretesVisiveis,fretes]);
+
+  function abrirNovo(){ setForm(emptyForm()); setRateioTemp([]); setEditandoId(null); setModalAberto(true); }
+
+  function salvarFrete(){
+    const totalPct=rateioTemp.reduce((a,r)=>a+ +r.pct,0);
+    if(rateioTemp.length>0&&Math.abs(totalPct-100)>0.01){alert(`Os percentuais somam ${totalPct.toFixed(1)}%. Ajuste para 100%.`);return;}
+    const novo={...form,id:editandoId||Date.now(),valorNF:+form.valorNF,valorFrete:+form.valorFrete,peso:+form.peso,orcamento:+form.orcamento,chaveNFe:form.chaveNFe||null,chaveCTe:null,rateios:rateioTemp};
+    setFretes(prev=>editandoId?prev.map(f=>f.id===editandoId?novo:f):[novo,...prev]);
+    setModalAberto(false);
+  }
+
+  function importarFretes(novos){ setFretes(prev=>{const mapa={};prev.forEach(f=>{if(f.chaveNFe)mapa[f.chaveNFe]=f;});const res=[...prev];novos.forEach(n=>{if(n.chaveNFe&&mapa[n.chaveNFe]){const idx=res.findIndex(f=>f.chaveNFe===n.chaveNFe);if(idx>=0)res[idx]={...res[idx],...n};}else res.unshift({...n,id:Date.now()+Math.random(),rateios:[]});});return res;}); }
+
+  const transportadorasUnicas=[...new Set(fretes.map(f=>f.transportadora))];
+  const mesesUnicos=[...new Set(fretes.map(f=>f.mes))].sort();
+
+  return (
+    <div style={s.root}>
+      {/* Sidebar */}
+      <aside style={s.sidebar}>
+        <div style={s.logo}><span style={{fontSize:28}}>🚛</span><div><div style={s.logoTitle}>FreteControl</div><div style={s.logoSub}>Gestão Operacional</div></div></div>
+        <nav style={s.nav}>
+          {[{id:"dashboard",icon:"📊",label:"Dashboard"},{id:"custos",icon:"🏷️",label:"Centros de Custo"},{id:"fretes",icon:"📦",label:"Fretes & NFs"},{id:"importar",icon:"📂",label:"Importar XML"},{id:"alertas",icon:"🔔",label:"Alertas"},{id:"config",icon:"⚙️",label:"Configurações"}].map(item=>(
+            <button key={item.id} style={aba===item.id?{...s.navBtn,...s.navBtnAtivo}:s.navBtn} onClick={()=>setAba(item.id)}>
+              <span>{item.icon}</span><span>{item.label}</span>
+              {item.id==="alertas"&&kpis.acimOrc.length>0&&<span style={s.badge}>{kpis.acimOrc.length}</span>}
+            </button>
+          ))}
+        </nav>
+        <div style={s.sidebarBottom}>
+          <div style={s.orcBox}>
+            <div style={{fontSize:10,color:"#64748b",marginBottom:4}}>Orçamento Global</div>
+            <div style={{fontSize:15,fontWeight:700,color:"#f8fafc",marginBottom:8}}>{fmtBRL(orcGlobal)}</div>
+            <div style={s.progressBar}><div style={{...s.progressFill,width:`${Math.min(100,kpis.totalFrete/orcGlobal*100)}%`,background:kpis.totalFrete>orcGlobal?"#ef4444":"#22c55e"}}/></div>
+            <div style={{fontSize:10,color:"#64748b",marginTop:4}}>{(kpis.totalFrete/orcGlobal*100).toFixed(0)}% utilizado</div>
+          </div>
+        </div>
+      </aside>
+
+      {/* Main */}
+      <main style={s.main}>
+        <header style={s.header}>
+          <div>
+            <h1 style={s.pageTitle}>{({dashboard:"Dashboard",custos:"Centros de Custo & Despesas",fretes:"Fretes & Notas Fiscais",importar:"Importar XML",alertas:"Alertas",config:"Configurações"})[aba]}</h1>
+            <p style={s.pageSub}>Gestão de custos e performance de frete</p>
+          </div>
+          <button style={s.btnPrimary} onClick={abrirNovo}>+ Novo Frete / NF</button>
+        </header>
+
+        {/* Filtros */}
+        <div style={s.filtros}>
+          <input style={s.searchInput} placeholder="🔍  Buscar NF ou transportadora…" value={busca} onChange={e=>setBusca(e.target.value)}/>
+          <select style={s.select} value={filtroMes} onChange={e=>setFiltroMes(e.target.value)}><option value="todos">Todos os meses</option>{mesesUnicos.map(m=><option key={m} value={m}>{m}</option>)}</select>
+          <select style={s.select} value={filtroCC} onChange={e=>setFiltroCC(e.target.value)}><option value="todos">Todos os C.Custo</option>{centros.map(c=><option key={c.id} value={c.id}>{c.codigo} – {c.nome} / {c.filial}</option>)}</select>
+          <select style={s.select} value={filtroDespesa} onChange={e=>setFiltroDespesa(e.target.value)}><option value="todos">Todos os tipos</option>{TIPOS_DESPESA.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select>
+          <select style={s.select} value={filtroTipo} onChange={e=>setFiltroTipo(e.target.value)}><option value="todos">Emitidas e Recebidas</option><option value="emitida">Emitidas</option><option value="recebida">Recebidas</option></select>
+        </div>
+
+        <div style={{flex:1,overflow:"auto",padding:"20px 28px"}}>
+          {aba==="dashboard" && <Dashboard kpis={kpis} centros={centros} fmtBRL={fmtBRL} fmtPct={fmtPct}/>}
+          {aba==="custos"    && <CentrosCusto centros={centros} setCentros={setCentros} fretes={fretesVisiveis} kpis={kpis} fmtBRL={fmtBRL} fmtPct={fmtPct}/>}
+          {aba==="fretes"    && <TabelaFretes fretes={fretesVisiveis} centros={centros} fmtBRL={fmtBRL} fmtDate={fmtDate}/>}
+          {aba==="importar"  && <ImportarXML fretes={fretes} onImportar={importarFretes} fmtBRL={fmtBRL}/>}
+          {aba==="alertas"   && <Alertas fretes={fretesVisiveis} centros={centros} kpis={kpis} fmtBRL={fmtBRL} fmtDate={fmtDate}/>}
+          {aba==="config"    && <Config orcGlobal={orcGlobal} setOrcGlobal={setOrcGlobal}/>}
+        </div>
+      </main>
+
+      {/* Modal frete */}
+      {modalAberto&&(
+        <div style={s.overlay} onClick={()=>setModalAberto(false)}>
+          <div style={{...s.modal,maxWidth:780}} onClick={e=>e.stopPropagation()}>
+            <div style={s.modalHeader}><h2 style={{fontSize:17,fontWeight:700,color:"#f8fafc",margin:0}}>Novo Registro de Frete / NF</h2><button style={s.closeBtn} onClick={()=>setModalAberto(false)}>✕</button></div>
+            <div style={s.modalGrid}>
+              <Field label="Número da NF" value={form.nf} onChange={v=>setForm({...form,nf:v})}/>
+              <FieldSelect label="Tipo de NF" value={form.tipo} onChange={v=>setForm({...form,tipo:v})} options={[["emitida","Emitida"],["recebida","Recebida"]]}/>
+              <Field label="Transportadora" value={form.transportadora} onChange={v=>setForm({...form,transportadora:v})}/>
+              <FieldSelect label="Modalidade" value={form.modalidade} onChange={v=>setForm({...form,modalidade:v})} options={MODALIDADES.map(m=>[m,m])}/>
+              <Field label="Origem" value={form.origem} onChange={v=>setForm({...form,origem:v})} placeholder="Cidade, UF"/>
+              <Field label="Destino" value={form.destino} onChange={v=>setForm({...form,destino:v})} placeholder="Cidade, UF"/>
+              <Field label="Valor NF (R$)" type="number" value={form.valorNF} onChange={v=>setForm({...form,valorNF:v})}/>
+              <Field label="Valor Frete (R$)" type="number" value={form.valorFrete} onChange={v=>setForm({...form,valorFrete:v})}/>
+              <Field label="Peso (kg)" type="number" value={form.peso} onChange={v=>setForm({...form,peso:v})}/>
+              <Field label="Orçamento (R$)" type="number" value={form.orcamento} onChange={v=>setForm({...form,orcamento:v})}/>
+              <Field label="Prazo" type="date" value={form.prazo} onChange={v=>setForm({...form,prazo:v})}/>
+              <Field label="Entrega Real" type="date" value={form.entrega} onChange={v=>setForm({...form,entrega:v})}/>
+              <FieldSelect label="Status" value={form.status} onChange={v=>setForm({...form,status:v})} options={STATUS_OPTS.map(st=>[st,statusLabel[st]])}/>
+              <Field label="Mês" type="month" value={form.mes} onChange={v=>setForm({...form,mes:v})}/>
+            </div>
+            {/* Rateio */}
+            <RateioEditor rateios={rateioTemp} setRateios={setRateioTemp} centros={centros} fmtBRL={fmtBRL} valorFrete={+form.valorFrete||0}/>
+            <div style={s.modalFooter}>
+              <button style={s.btnSecondary} onClick={()=>setModalAberto(false)}>Cancelar</button>
+              <button style={s.btnPrimary} onClick={salvarFrete}>Salvar</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── RateioEditor ─────────────────────────────────────────────────────────────
+function RateioEditor({rateios,setRateios,centros,fmtBRL,valorFrete}){
+  const totalPct=rateios.reduce((a,r)=>a+ +r.pct,0);
+  const ok=rateios.length===0||Math.abs(totalPct-100)<0.01;
+  function add(){setRateios([...rateios,{ccId:centros[0]?.id||"",pct:rateios.length===0?100:0,tipoDespesa:"frete_compra"}]);}
+  function rm(i){setRateios(rateios.filter((_,j)=>j!==i));}
+  function upd(i,k,v){setRateios(rateios.map((r,j)=>j===i?{...r,[k]:v}:r));}
+  return(
+    <div style={{marginTop:18,borderTop:"1px solid #1e293b",paddingTop:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <span style={{fontWeight:600,color:"#94a3b8",fontSize:13}}>📊 Rateio por Centro de Custo</span>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:12,color:ok?"#22c55e":"#ef4444",fontWeight:600}}>{rateios.length>0?`Total: ${totalPct.toFixed(0)}%${ok?" ✓":" ⚠️ deve ser 100%"}`:""}</span>
+          <button style={{...s.btnSecondary,padding:"4px 10px",fontSize:12}} onClick={add}>+ Linha</button>
+        </div>
+      </div>
+      {rateios.length===0&&<div style={{color:"#475569",fontSize:12,padding:"8px 0"}}>Nenhum rateio definido — o frete será lançado sem centro de custo.</div>}
+      {rateios.map((r,i)=>(
+        <div key={i} style={{display:"grid",gridTemplateColumns:"2fr 1fr 1fr auto",gap:8,marginBottom:8,alignItems:"end"}}>
+          <div>
+            {i===0&&<label style={s.label}>Centro de Custo</label>}
+            <select style={s.input} value={r.ccId} onChange={e=>upd(i,"ccId",e.target.value)}>
+              {centros.map(c=><option key={c.id} value={c.id}>{c.codigo} – {c.nome} / {c.filial}</option>)}
+            </select>
+          </div>
+          <div>
+            {i===0&&<label style={s.label}>Tipo de Despesa</label>}
+            <select style={s.input} value={r.tipoDespesa} onChange={e=>upd(i,"tipoDespesa",e.target.value)}>
+              {TIPOS_DESPESA.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}
+            </select>
+          </div>
+          <div>
+            {i===0&&<label style={s.label}>% Rateio → {fmtBRL(valorFrete*(r.pct/100))}</label>}
+            <input style={s.input} type="number" min="0" max="100" value={r.pct} onChange={e=>upd(i,"pct",e.target.value)}/>
+          </div>
+          <button style={{...s.closeBtn,padding:"8px",background:"#1e293b",borderRadius:6}} onClick={()=>rm(i)}>✕</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+function Dashboard({kpis,centros,fmtBRL,fmtPct}){
+  const transpEntries=Object.entries(kpis.porTransp).sort((a,b)=>b[1]-a[1]);
+  const mesEntries=Object.entries(kpis.porMes).sort((a,b)=>a[0].localeCompare(b[0]));
+  const ccEntries=Object.entries(kpis.porCC).sort((a,b)=>b[1]-a[1]);
+  const tipoEntries=Object.entries(kpis.porTipo).sort((a,b)=>b[1]-a[1]);
+  const maxT=Math.max(...transpEntries.map(e=>e[1]),1);
+  const maxM=Math.max(...mesEntries.map(e=>e[1]),1);
+  const maxCC=Math.max(...ccEntries.map(e=>e[1]),1);
+  const totalTipo=tipoEntries.reduce((a,e)=>a+e[1],0)||1;
+  const ccNome=id=>{const c=centros.find(x=>x.id===id);return c?`${c.codigo} ${c.nome}/${c.filial}`:"—";};
+  return(
+    <div style={s.dashGrid}>
+      <KPICard icon="💰" label="Custo Total Frete"    value={fmtBRL(kpis.totalFrete)}              cor="#3b82f6"/>
+      <KPICard icon="📄" label="Total de NFs"         value={kpis.totalNFs}                         cor="#8b5cf6"/>
+      <KPICard icon="✅" label="On-Time Delivery"     value={`${kpis.ontimeRate}%`}                 cor="#22c55e"/>
+      <KPICard icon="⚠️" label="Acima do Orçamento"  value={kpis.acimOrc.length}                   cor="#ef4444" destaque={kpis.acimOrc.length>0}/>
+      <KPICard icon="📦" label="Custo por NF"         value={fmtBRL(kpis.custoPorNF)}              cor="#f59e0b"/>
+      <KPICard icon="⚖️" label="Custo por Kg"         value={fmtBRL(kpis.custoPorKg)}              cor="#06b6d4"/>
+
+      {/* Tipo de despesa — donut textual */}
+      <div style={{...s.card,gridColumn:"span 2"}}>
+        <h3 style={s.cardTitle}>🏷️ Por Tipo de Despesa</h3>
+        <div style={{marginTop:12,display:"flex",flexDirection:"column",gap:8}}>
+          {tipoEntries.map(([tid,val])=>{const t=tipoDespesaInfo(tid);return(
+            <div key={tid}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3}}>
+                <span style={{color:t.cor}}>{t.label}</span>
+                <span style={{color:"#f8fafc",fontWeight:600}}>{fmtBRL(val)} <span style={{color:"#64748b",fontWeight:400}}>({(val/totalTipo*100).toFixed(0)}%)</span></span>
+              </div>
+              <div style={s.progressBar}><div style={{...s.progressFill,width:`${val/totalTipo*100}%`,background:t.cor}}/></div>
+            </div>
+          );})}
+        </div>
+      </div>
+
+      {/* Por CC */}
+      <div style={{...s.card,gridColumn:"span 4"}}>
+        <h3 style={s.cardTitle}>🏢 Custo por Centro de Custo</h3>
+        <div style={{marginTop:12}}>
+          {ccEntries.slice(0,8).map(([ccId,val])=>{
+            const cc=centros.find(c=>c.id===ccId);
+            const pctOrc=cc?.orcamento?val/cc.orcamento*100:null;
+            return(
+              <div key={ccId} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3,color:"#cbd5e1"}}>
+                  <span><span style={{color:"#64748b",fontSize:10,marginRight:6}}>{cc?.codigo}</span>{cc?.nome} <span style={{color:"#475569"}}>/ {cc?.filial}</span></span>
+                  <span style={{fontWeight:600,color:"#f8fafc"}}>{fmtBRL(val)} {pctOrc!==null&&<span style={{color:pctOrc>100?"#ef4444":"#64748b",fontSize:11}}> ({pctOrc.toFixed(0)}% orç.)</span>}</span>
+                </div>
+                <div style={s.progressBar}><div style={{...s.progressFill,width:`${val/maxCC*100}%`,background:`linear-gradient(90deg,${pctOrc>100?"#ef4444":"#3b82f6"},${pctOrc>100?"#f87171":"#8b5cf6"})`}}/></div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Transportadora */}
+      <div style={{...s.card,gridColumn:"span 3"}}>
+        <h3 style={s.cardTitle}>🚚 Por Transportadora</h3>
+        <div style={{marginTop:12}}>
+          {transpEntries.map(([nome,val])=>(
+            <div key={nome} style={{marginBottom:10}}>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:12,marginBottom:3,color:"#cbd5e1"}}><span>{nome}</span><span style={{fontWeight:600,color:"#f8fafc"}}>{fmtBRL(val)}</span></div>
+              <div style={s.progressBar}><div style={{...s.progressFill,width:`${val/maxT*100}%`,background:"linear-gradient(90deg,#3b82f6,#8b5cf6)"}}/></div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Mês a mês */}
+      <div style={{...s.card,gridColumn:"span 3"}}>
+        <h3 style={s.cardTitle}>📅 Evolução Mensal</h3>
+        <div style={{display:"flex",alignItems:"flex-end",gap:8,height:110,marginTop:16}}>
+          {mesEntries.map(([mes,val])=>(
+            <div key={mes} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:4}}>
+              <div style={{fontSize:9,color:"#94a3b8"}}>{(val/1000).toFixed(0)}k</div>
+              <div style={{width:"100%",background:"linear-gradient(180deg,#3b82f6,#1d4ed8)",borderRadius:"4px 4px 0 0",height:`${val/maxM*90}px`,minHeight:4}}/>
+              <div style={{fontSize:9,color:"#64748b"}}>{mes.slice(5)}/{mes.slice(2,4)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Centros de Custo ─────────────────────────────────────────────────────────
+function CentrosCusto({centros,setCentros,fretes,kpis,fmtBRL,fmtPct}){
+  const [novoCC,setNovoCC]=useState({codigo:"",nome:"",filial:"",orcamento:""});
+  const [abaCC,setAbaCC]=useState("visao"); // visao | cadastro | comparativo
+
+  function adicionarCC(){
+    if(!novoCC.codigo||!novoCC.nome||!novoCC.filial){alert("Preencha código, nome e filial.");return;}
+    setCentros([...centros,{...novoCC,id:"cc"+Date.now(),orcamento:+novoCC.orcamento||0}]);
+    setNovoCC({codigo:"",nome:"",filial:"",orcamento:""});
+  }
+  function removerCC(id){if(window.confirm("Remover este centro de custo?"))setCentros(centros.filter(c=>c.id!==id));}
+  function atualizarOrc(id,val){setCentros(centros.map(c=>c.id===id?{...c,orcamento:+val}:c));}
+
+  /* custo realizado por CC */
+  const realizadoPorCC=useMemo(()=>{
+    const m={};
+    fretes.forEach(f=>(f.rateios||[]).forEach(r=>{const v=(f.valorFrete||0)*(r.pct/100);m[r.ccId]=(m[r.ccId]||0)+v;}));
+    return m;
+  },[fretes]);
+
+  /* por CC por tipo */
+  const ccPorTipo=useMemo(()=>{
+    const m={};
+    fretes.forEach(f=>(f.rateios||[]).forEach(r=>{
+      if(!m[r.ccId])m[r.ccId]={};
+      const v=(f.valorFrete||0)*(r.pct/100);
+      m[r.ccId][r.tipoDespesa]=(m[r.ccId][r.tipoDespesa]||0)+v;
+    }));
+    return m;
+  },[fretes]);
+
+  /* filiais únicas */
+  const filiaisUnicas=[...new Set(centros.map(c=>c.filial))];
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      {/* Sub-abas */}
+      <div style={{display:"flex",gap:8}}>
+        {[["visao","📊 Visão Geral"],["comparativo","📈 Comparativo"],["cadastro","⚙️ Gerenciar CCs"]].map(([id,label])=>(
+          <button key={id} style={{...s.btnSecondary,background:abaCC===id?"#1e3a5f":"#1e293b",color:abaCC===id?"#93c5fd":"#94a3b8",border:abaCC===id?"1px solid #3b82f6":"1px solid #334155"}} onClick={()=>setAbaCC(id)}>{label}</button>
+        ))}
+      </div>
+
+      {abaCC==="visao"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:12}}>
+          {filiaisUnicas.map(filial=>(
+            <div key={filial} style={s.card}>
+              <h3 style={{...s.cardTitle,marginBottom:12,color:"#93c5fd"}}>🏢 {filial}</h3>
+              <table style={s.table}>
+                <thead><tr>{["Código","Departamento","Orçamento","Realizado","Saldo","Utiliz.","Frete Compra","Frete Venda","Transferência","Devolução"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {centros.filter(c=>c.filial===filial).map(cc=>{
+                    const real=realizadoPorCC[cc.id]||0;
+                    const saldo=cc.orcamento-real;
+                    const pct=cc.orcamento?real/cc.orcamento*100:0;
+                    const ct=ccPorTipo[cc.id]||{};
+                    return(
+                      <tr key={cc.id} style={s.tr}>
+                        <td style={{...s.td,color:"#94a3b8",fontSize:11}}>{cc.codigo}</td>
+                        <td style={{...s.td,fontWeight:600,color:"#e2e8f0"}}>{cc.nome}</td>
+                        <td style={s.td}>{fmtBRL(cc.orcamento)}</td>
+                        <td style={{...s.td,fontWeight:600,color:pct>100?"#f87171":"#4ade80"}}>{fmtBRL(real)}</td>
+                        <td style={{...s.td,color:saldo<0?"#ef4444":"#22c55e",fontWeight:600}}>{fmtBRL(saldo)}</td>
+                        <td style={s.td}>
+                          <div style={{display:"flex",alignItems:"center",gap:6}}>
+                            <div style={{...s.progressBar,width:60,flex:"none"}}><div style={{...s.progressFill,width:`${Math.min(100,pct)}%`,background:pct>100?"#ef4444":"#22c55e"}}/></div>
+                            <span style={{fontSize:11,color:pct>100?"#f87171":"#94a3b8"}}>{pct.toFixed(0)}%</span>
+                          </div>
+                        </td>
+                        {["frete_compra","frete_venda","transferencia","devolucao"].map(tid=>(
+                          <td key={tid} style={{...s.td,color:tipoDespesaInfo(tid).cor,fontSize:12}}>{ct[tid]?fmtBRL(ct[tid]):"—"}</td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {abaCC==="comparativo"&&(
+        <div style={s.card}>
+          <h3 style={s.cardTitle}>📈 Comparativo de Centros de Custo — Orçado vs Realizado</h3>
+          <div style={{marginTop:16,display:"flex",flexDirection:"column",gap:14}}>
+            {centros.filter(c=>(realizadoPorCC[c.id]||0)>0||(c.orcamento||0)>0).sort((a,b)=>(realizadoPorCC[b.id]||0)-(realizadoPorCC[a.id]||0)).map(cc=>{
+              const real=realizadoPorCC[cc.id]||0;
+              const orc=cc.orcamento||0;
+              const maxBar=Math.max(real,orc,1);
+              const pct=orc?real/orc*100:0;
+              return(
+                <div key={cc.id} style={{padding:"10px 0",borderBottom:"1px solid #1e293b"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,alignItems:"center"}}>
+                    <span style={{fontSize:13,color:"#e2e8f0"}}><span style={{color:"#64748b",marginRight:6,fontSize:11}}>{cc.codigo}</span>{cc.nome} <span style={{color:"#475569"}}>/ {cc.filial}</span></span>
+                    <span style={{fontSize:12,color:pct>100?"#f87171":"#94a3b8"}}>{pct.toFixed(0)}% do orçamento</span>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                    <span style={{fontSize:10,color:"#475569",width:50,textAlign:"right"}}>Orç.</span>
+                    <div style={{...s.progressBar,flex:1}}><div style={{...s.progressFill,width:`${orc/maxBar*100}%`,background:"#334155"}}/></div>
+                    <span style={{fontSize:11,color:"#64748b",width:80,textAlign:"right"}}>{fmtBRL(orc)}</span>
+                  </div>
+                  <div style={{display:"flex",gap:8,alignItems:"center",marginTop:4}}>
+                    <span style={{fontSize:10,color:"#475569",width:50,textAlign:"right"}}>Real</span>
+                    <div style={{...s.progressBar,flex:1}}><div style={{...s.progressFill,width:`${real/maxBar*100}%`,background:pct>100?"#ef4444":"#22c55e"}}/></div>
+                    <span style={{fontSize:11,fontWeight:600,color:pct>100?"#f87171":"#4ade80",width:80,textAlign:"right"}}>{fmtBRL(real)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {abaCC==="cadastro"&&(
+        <div style={{display:"flex",flexDirection:"column",gap:14}}>
+          {/* Novo CC */}
+          <div style={{...s.card,borderTop:"3px solid #3b82f6"}}>
+            <h3 style={s.cardTitle}>➕ Novo Centro de Custo</h3>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 2fr 2fr 1fr auto",gap:10,marginTop:12,alignItems:"end"}}>
+              <div><label style={s.label}>Código</label><input style={s.input} value={novoCC.codigo} onChange={e=>setNovoCC({...novoCC,codigo:e.target.value})} placeholder="1100"/></div>
+              <div><label style={s.label}>Departamento</label><input style={s.input} value={novoCC.nome} onChange={e=>setNovoCC({...novoCC,nome:e.target.value})} placeholder="Logística"/></div>
+              <div><label style={s.label}>Filial / Unidade</label><input style={s.input} value={novoCC.filial} onChange={e=>setNovoCC({...novoCC,filial:e.target.value})} placeholder="Matriz SP"/></div>
+              <div><label style={s.label}>Orçamento R$</label><input style={s.input} type="number" value={novoCC.orcamento} onChange={e=>setNovoCC({...novoCC,orcamento:e.target.value})}/></div>
+              <button style={{...s.btnPrimary,height:36}} onClick={adicionarCC}>Adicionar</button>
+            </div>
+          </div>
+          {/* Lista */}
+          <div style={s.card}>
+            <h3 style={s.cardTitle}>📋 Centros de Custo Cadastrados ({centros.length})</h3>
+            <table style={{...s.table,marginTop:12}}>
+              <thead><tr>{["Código","Departamento","Filial","Orçamento Mensal","Realizado","Ação"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+              <tbody>
+                {centros.map(cc=>(
+                  <tr key={cc.id} style={s.tr}>
+                    <td style={{...s.td,color:"#94a3b8"}}>{cc.codigo}</td>
+                    <td style={{...s.td,fontWeight:600}}>{cc.nome}</td>
+                    <td style={s.td}>{cc.filial}</td>
+                    <td style={s.td}>
+                      <input style={{...s.input,width:120,padding:"4px 8px"}} type="number" value={cc.orcamento} onChange={e=>atualizarOrc(cc.id,e.target.value)}/>
+                    </td>
+                    <td style={{...s.td,color:"#4ade80"}}>{fmtBRL(realizadoPorCC[cc.id]||0)}</td>
+                    <td style={s.td}><button style={{...s.btnSecondary,padding:"3px 10px",fontSize:11,color:"#ef4444"}} onClick={()=>removerCC(cc.id)}>Remover</button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Tabela Fretes ────────────────────────────────────────────────────────────
+function TabelaFretes({fretes,centros,fmtBRL,fmtDate}){
+  const ccNome=id=>{const c=centros.find(x=>x.id===id);return c?`${c.codigo} ${c.nome}`:id;};
+  return(
+    <div style={s.card}>
+      <h3 style={s.cardTitle}>📋 Fretes & Notas Fiscais ({fretes.length})</h3>
+      <div style={{overflowX:"auto",marginTop:12}}>
+        <table style={s.table}>
+          <thead><tr>{["NF","Tipo","Transportadora","Origem → Destino","Valor NF","Frete","Peso","Prazo","Status","Tipo Despesa","Centro(s) de Custo","CT-e"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead>
+          <tbody>
+            {fretes.map(f=>{
+              const atrasado=f.entrega&&f.prazo&&f.entrega>f.prazo;
+              const acimOrc=f.valorFrete>f.orcamento&&f.orcamento>0;
+              return(
+                <tr key={f.id} style={s.tr}>
+                  <td style={{...s.td,fontWeight:600,color:"#93c5fd"}}>{f.nf}</td>
+                  <td style={s.td}><span style={{padding:"2px 7px",borderRadius:99,fontSize:11,background:f.tipo==="emitida"?"#1e3a5f":"#2d1b4e",color:f.tipo==="emitida"?"#93c5fd":"#c4b5fd"}}>{f.tipo==="emitida"?"↑ Emit.":"↓ Receb."}</span></td>
+                  <td style={s.td}>{f.transportadora}</td>
+                  <td style={{...s.td,fontSize:11}}>{f.origem} → {f.destino}</td>
+                  <td style={s.td}>{fmtBRL(f.valorNF)}</td>
+                  <td style={{...s.td,color:acimOrc?"#f87171":"#4ade80",fontWeight:600}}>{fmtBRL(f.valorFrete)}</td>
+                  <td style={s.td}>{f.peso>0?`${f.peso}kg`:"—"}</td>
+                  <td style={s.td}>{fmtDate(f.prazo)}</td>
+                  <td style={s.td}><span style={{padding:"2px 7px",borderRadius:99,fontSize:11,background:statusColor[f.status]+"22",color:statusColor[f.status]}}>{statusLabel[f.status]||f.status}</span></td>
+                  <td style={s.td}>
+                    {(f.rateios||[]).map((r,i)=>{const t=tipoDespesaInfo(r.tipoDespesa);return <span key={i} style={{display:"inline-block",padding:"1px 6px",borderRadius:4,background:t.cor+"22",color:t.cor,fontSize:10,margin:"1px"}}>{t.label.split(" ")[0]}</span>;})}
+                  </td>
+                  <td style={s.td}>
+                    {(f.rateios||[]).map((r,i)=>(
+                      <span key={i} style={{display:"block",fontSize:10,color:"#94a3b8"}}>{ccNome(r.ccId)} <span style={{color:"#475569"}}>{r.pct}%</span></span>
+                    ))}
+                  </td>
+                  <td style={{...s.td,fontSize:10,color:"#475569"}}>{f.chaveCTe?"✅":"—"}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── Alertas ──────────────────────────────────────────────────────────────────
+function Alertas({fretes,centros,kpis,fmtBRL,fmtDate}){
+  const acimOrc=fretes.filter(f=>f.valorFrete>f.orcamento&&f.orcamento>0);
+  const atrasados=fretes.filter(f=>f.entrega&&f.prazo&&f.entrega>f.prazo);
+  const emTransito=fretes.filter(f=>f.status==="em_transito");
+  const semRateio=fretes.filter(f=>!f.rateios||f.rateios.length===0);
+
+  /* CCs estourados */
+  const realizadoPorCC={};
+  fretes.forEach(f=>(f.rateios||[]).forEach(r=>{const v=(f.valorFrete||0)*(r.pct/100);realizadoPorCC[r.ccId]=(realizadoPorCC[r.ccId]||0)+v;}));
+  const ccEstourados=centros.filter(c=>c.orcamento>0&&(realizadoPorCC[c.id]||0)>c.orcamento);
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:14}}>
+      <AlertSection titulo="🚨 Centros de Custo Acima do Orçamento" cor="#ef4444" itens={ccEstourados} render={c=>(
+        <div style={s.alertRow}><strong style={{color:"#93c5fd"}}>{c.codigo} – {c.nome}</strong><span>{c.filial}</span><span>Orçado: {fmtBRL(c.orcamento)}</span><span style={{color:"#f87171",fontWeight:600}}>Realizado: {fmtBRL(realizadoPorCC[c.id]||0)}</span><span style={{color:"#ef4444"}}>+{fmtBRL((realizadoPorCC[c.id]||0)-c.orcamento)}</span></div>
+      )}/>
+      <AlertSection titulo="⚠️ Fretes sem Centro de Custo" cor="#f59e0b" itens={semRateio} render={f=>(
+        <div style={s.alertRow}><strong style={{color:"#93c5fd"}}>{f.nf}</strong><span>{f.transportadora}</span><span style={{color:"#fbbf24"}}>{fmtBRL(f.valorFrete)}</span><span style={{color:"#475569",fontSize:11}}>Classifique o centro de custo neste lançamento</span></div>
+      )}/>
+      <AlertSection titulo="🚨 Fretes Acima do Orçamento" cor="#ef4444" itens={acimOrc} render={f=>(
+        <div style={s.alertRow}><strong style={{color:"#93c5fd"}}>{f.nf}</strong><span>{f.transportadora}</span><span>Orçado: {fmtBRL(f.orcamento)}</span><span style={{color:"#f87171",fontWeight:600}}>Real: {fmtBRL(f.valorFrete)}</span></div>
+      )}/>
+      <AlertSection titulo="⏰ Entregas Atrasadas" cor="#f59e0b" itens={atrasados} render={f=>(
+        <div style={s.alertRow}><strong style={{color:"#93c5fd"}}>{f.nf}</strong><span>{f.transportadora}</span><span>Prazo: {fmtDate(f.prazo)}</span><span style={{color:"#fbbf24"}}>Entregue: {fmtDate(f.entrega)}</span></div>
+      )}/>
+      <AlertSection titulo="🚚 Em Trânsito" cor="#3b82f6" itens={emTransito} render={f=>(
+        <div style={s.alertRow}><strong style={{color:"#93c5fd"}}>{f.nf}</strong><span>{f.transportadora}</span><span>{f.origem} → {f.destino}</span><span style={{color:"#60a5fa"}}>{fmtBRL(f.valorFrete)}</span></div>
+      )}/>
+    </div>
+  );
+}
+
+function AlertSection({titulo,cor,itens,render}){
+  return(
+    <div style={{...s.card,borderLeft:`3px solid ${cor}`}}>
+      <h3 style={{...s.cardTitle,color:cor}}>{titulo} <span style={{color:"#475569",fontWeight:400}}>({itens.length})</span></h3>
+      {itens.length===0?<p style={{color:"#475569",marginTop:8,fontSize:13}}>Nenhuma ocorrência ✓</p>
+        :<div style={{marginTop:8,display:"flex",flexDirection:"column",gap:4}}>{itens.map((f,i)=><div key={i}>{render(f)}</div>)}</div>}
+    </div>
+  );
+}
+
+// ─── Importar XML ─────────────────────────────────────────────────────────────
+function ImportarXML({fretes,onImportar,fmtBRL}){
+  const [arquivos,setArquivos]=useState([]);
+  const [etapa,setEtapa]=useState("upload");
+  const [cruzamento,setCruzamento]=useState([]);
+  const [dragging,setDragging]=useState(false);
+  const inputRef=useRef();
+
+  const processarArquivos=useCallback((files)=>{
+    const lista=Array.from(files).filter(f=>f.name.endsWith(".xml"));
+    if(!lista.length)return;
+    const results=[];let pending=lista.length;
+    lista.forEach(file=>{
+      const reader=new FileReader();
+      reader.onload=e=>{
+        const xmlStr=e.target.result;
+        const tipo=detectarTipoXML(xmlStr);
+        let dados=tipo==="nfe"?parsearNFe(xmlStr):tipo==="cte"?parsearCTe(xmlStr):{erro:"Tipo não identificado"};
+        results.push({nome:file.name,tipo,dados});
+        if(--pending===0){
+          setArquivos(results);
+          const nfes=results.filter(r=>r.tipo==="nfe"&&!r.dados.erro);
+          const ctes=results.filter(r=>r.tipo==="cte"&&!r.dados.erro);
+          const mapaChave={};
+          nfes.forEach(r=>{if(r.dados.chaveNFe)mapaChave[r.dados.chaveNFe]=r.dados;});
+          fretes.forEach(f=>{if(f.chaveNFe)mapaChave[f.chaveNFe]=f;});
+          const cruzados=[];
+          nfes.forEach(r=>{const vinc=ctes.some(c=>c.dados.nfesReferenciadas?.includes(r.dados.chaveNFe));cruzados.push({tipo:"nfe",dados:r.dados,nome:r.nome,vinc});});
+          ctes.forEach(r=>{cruzados.push({tipo:"cte",dados:r.dados,nome:r.nome,nfsVinc:(r.dados.nfesReferenciadas||[]).map(ch=>mapaChave[ch]).filter(Boolean)});});
+          setCruzamento(cruzados);setEtapa("revisao");
+        }
+      };
+      reader.readAsText(file,"UTF-8");
+    });
+  },[fretes]);
+
+  function confirmar(){
+    const mapaCTe={};
+    cruzamento.filter(c=>c.tipo==="cte").forEach(c=>{(c.dados.nfesReferenciadas||[]).forEach(ch=>{mapaCTe[ch]=c.dados;});});
+    const novos=[];
+    cruzamento.filter(c=>c.tipo==="nfe").forEach(c=>{
+      const nfe=c.dados;const cte=nfe.chaveNFe?mapaCTe[nfe.chaveNFe]:null;
+      novos.push({...nfe,valorFrete:cte?cte.valorFrete:nfe.valorFrete,transportadora:cte?cte.transportadora:nfe.transportadora,origem:cte?cte.origem:nfe.origem,destino:cte?cte.destino:nfe.destino,peso:cte?(cte.peso||nfe.peso):nfe.peso,chaveCTe:cte?cte.chaveCTe:null,rateios:[]});
+    });
+    onImportar(novos);setEtapa("concluido");setArquivos([]);
+  }
+
+  if(etapa==="concluido")return(<div style={{...s.card,textAlign:"center",padding:48}}><div style={{fontSize:56}}>✅</div><h2 style={{color:"#22c55e",marginTop:12}}>Importação concluída!</h2><p style={{color:"#94a3b8"}}>Classifique os centros de custo nos novos registros.</p><button style={{...s.btnPrimary,marginTop:16}} onClick={()=>setEtapa("upload")}>Importar mais</button></div>);
+
+  if(etapa==="revisao"){
+    const nfes=cruzamento.filter(c=>c.tipo==="nfe");
+    const ctes=cruzamento.filter(c=>c.tipo==="cte");
+    const mapaCTe={};ctes.forEach(c=>(c.dados.nfesReferenciadas||[]).forEach(ch=>{mapaCTe[ch]=c.dados;}));
+    const comCTe=nfes.filter(c=>mapaCTe[c.dados.chaveNFe]);
+    const semCTe=nfes.filter(c=>!mapaCTe[c.dados.chaveNFe]);
+    const erros=cruzamento.filter(c=>c.dados.erro);
+    return(
+      <div style={{display:"flex",flexDirection:"column",gap:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+          <ResumoCard icon="📄" label="NF-es lidas" valor={nfes.length} cor="#3b82f6"/>
+          <ResumoCard icon="🚚" label="CT-es lidos" valor={ctes.length} cor="#8b5cf6"/>
+          <ResumoCard icon="🔗" label="Cruzamentos OK" valor={comCTe.length} cor="#22c55e"/>
+          <ResumoCard icon="⚠️" label="NFs sem CT-e" valor={semCTe.length} cor="#f59e0b"/>
+        </div>
+        {erros.length>0&&<div style={{...s.card,borderLeft:"3px solid #ef4444"}}><div style={{color:"#f87171",fontWeight:600,fontSize:13}}>❌ Erros</div>{erros.map((e,i)=><div key={i} style={{color:"#94a3b8",fontSize:12,marginTop:4}}>{e.nome}: {e.dados.erro}</div>)}</div>}
+        {comCTe.length>0&&<div style={s.card}><div style={{color:"#22c55e",fontWeight:600,fontSize:13,marginBottom:10}}>✅ NFs com CT-e vinculado</div><table style={s.table}><thead><tr>{["NF-e","CT-e","Transportadora","Frete"].map(h=><th key={h} style={s.th}>{h}</th>)}</tr></thead><tbody>{comCTe.map((c,i)=>{const cte=mapaCTe[c.dados.chaveNFe];return(<tr key={i} style={s.tr}><td style={{...s.td,color:"#93c5fd"}}>{c.dados.nf}</td><td style={{...s.td,color:"#c4b5fd"}}>{cte.nCT}</td><td style={s.td}>{cte.transportadora}</td><td style={{...s.td,color:"#4ade80"}}>{fmtBRL(cte.valorFrete)}</td></tr>);})}</tbody></table></div>}
+        <div style={{display:"flex",gap:10,justifyContent:"flex-end"}}>
+          <button style={s.btnSecondary} onClick={()=>setEtapa("upload")}>← Voltar</button>
+          <button style={s.btnPrimary} onClick={confirmar}>✅ Confirmar e importar {nfes.length} registros</button>
+        </div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:16}}>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:14}}>
+        {[{n:"1",icon:"📥",t:"Obtenha os XMLs",d:"Exporte do ERP ou baixe no portal nfe.fazenda.gov.br com certificado digital."},{n:"2",icon:"📂",t:"Arraste os arquivos",d:"Jogue NF-e e CT-e juntos. O sistema identifica automaticamente."},{n:"3",icon:"🔗",t:"Cruzamento automático",d:"O CT-e referencia as chaves das NFs. O sistema vincula e preenche o frete."}].map(p=>(
+          <div key={p.n} style={{...s.card,borderTop:"3px solid #3b82f6"}}><div style={{fontSize:28}}>{p.icon}</div><div style={{fontWeight:700,color:"#93c5fd",marginTop:8,fontSize:13}}>{p.t}</div><div style={{color:"#64748b",fontSize:12,marginTop:6,lineHeight:1.6}}>{p.d}</div></div>
+        ))}
+      </div>
+      <div style={{...s.dropZone,borderColor:dragging?"#3b82f6":"#1e293b",background:dragging?"#0d1f35":"#0d1321"}} onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);processarArquivos(e.dataTransfer.files);}} onClick={()=>inputRef.current.click()}>
+        <input ref={inputRef} type="file" accept=".xml" multiple style={{display:"none"}} onChange={e=>processarArquivos(e.target.files)}/>
+        <div style={{fontSize:48}}>📂</div>
+        <div style={{color:"#93c5fd",fontWeight:600,marginTop:12,fontSize:15}}>{dragging?"Solte aqui!":"Arraste XMLs ou clique para selecionar"}</div>
+        <div style={{color:"#475569",fontSize:12,marginTop:6}}>NF-e e CT-e · Múltiplos arquivos · .xml</div>
+      </div>
+      <div style={{...s.card,borderLeft:"3px solid #f59e0b",display:"flex",gap:14}}>
+        <span style={{fontSize:24}}>💡</span>
+        <div style={{fontSize:12,color:"#94a3b8",lineHeight:1.7}}><b style={{color:"#fbbf24"}}>Após importar:</b> acesse a aba <b style={{color:"#e2e8f0"}}>Fretes & NFs</b>, abra cada registro e defina o centro de custo e tipo de despesa para que o sistema possa ratear corretamente os custos.</div>
+      </div>
+    </div>
+  );
+}
+
+function ResumoCard({icon,label,valor,cor}){return(<div style={{...s.card,borderTop:`3px solid ${cor}`,textAlign:"center"}}><div style={{fontSize:28}}>{icon}</div><div style={{fontSize:26,fontWeight:700,color:"#f8fafc",marginTop:4}}>{valor}</div><div style={{fontSize:11,color:"#64748b",marginTop:2}}>{label}</div></div>);}
+
+// ─── Config ───────────────────────────────────────────────────────────────────
+function Config({orcGlobal,setOrcGlobal}){
+  const [val,setVal]=useState(orcGlobal);
+  return(<div style={s.card}><h3 style={s.cardTitle}>⚙️ Configurações</h3><div style={{marginTop:16,maxWidth:400}}><label style={s.label}>Orçamento Global Mensal (R$)</label><input style={s.input} type="number" value={val} onChange={e=>setVal(+e.target.value)}/><button style={{...s.btnPrimary,marginTop:12}} onClick={()=>setOrcGlobal(val)}>Salvar</button></div></div>);
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function KPICard({icon,label,value,cor,destaque}){return(<div style={{...s.kpiCard,borderTop:`3px solid ${cor}`,boxShadow:destaque?`0 0 18px ${cor}44`:"none"}}><div style={{fontSize:24}}>{icon}</div><div style={{fontSize:22,fontWeight:700,color:"#f8fafc",marginTop:4}}>{value}</div><div style={{fontSize:12,color:"#64748b",marginTop:2}}>{label}</div></div>);}
+function Field({label,value,onChange,type="text",placeholder=""}){return <div><label style={s.label}>{label}</label><input style={s.input} type={type} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}/></div>;}
+function FieldSelect({label,value,onChange,options}){return <div><label style={s.label}>{label}</label><select style={s.input} value={value} onChange={e=>onChange(e.target.value)}>{options.map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></div>;}
+
+// ─── Estilos ──────────────────────────────────────────────────────────────────
+const s={
+  root:{display:"flex",height:"100vh",background:"#0b0f1a",color:"#e2e8f0",fontFamily:"'IBM Plex Sans','Segoe UI',sans-serif",overflow:"hidden"},
+  sidebar:{width:220,background:"#0d1321",borderRight:"1px solid #1e293b",display:"flex",flexDirection:"column",padding:"20px 0",flexShrink:0},
+  logo:{display:"flex",alignItems:"center",gap:10,padding:"0 20px 20px",borderBottom:"1px solid #1e293b"},
+  logoTitle:{fontSize:15,fontWeight:700,color:"#f8fafc"},logoSub:{fontSize:10,color:"#475569",marginTop:1},
+  nav:{padding:"16px 12px",flex:1,display:"flex",flexDirection:"column",gap:4},
+  navBtn:{display:"flex",alignItems:"center",gap:10,padding:"10px 12px",borderRadius:8,border:"none",background:"transparent",color:"#94a3b8",cursor:"pointer",fontSize:13,fontWeight:500,textAlign:"left",width:"100%",position:"relative"},
+  navBtnAtivo:{background:"#1e3a5f",color:"#93c5fd"},
+  badge:{position:"absolute",right:10,background:"#ef4444",color:"#fff",borderRadius:99,fontSize:10,padding:"1px 6px",fontWeight:700},
+  sidebarBottom:{padding:"16px",borderTop:"1px solid #1e293b"},
+  orcBox:{background:"#0b1623",borderRadius:8,padding:12},
+  progressBar:{height:6,background:"#1e293b",borderRadius:99,overflow:"hidden"},
+  progressFill:{height:"100%",borderRadius:99,transition:"width .4s"},
+  main:{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"},
+  header:{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"20px 28px",borderBottom:"1px solid #1e293b",flexShrink:0},
+  pageTitle:{fontSize:22,fontWeight:700,color:"#f8fafc",margin:0},pageSub:{fontSize:12,color:"#475569",margin:"3px 0 0"},
+  filtros:{display:"flex",gap:8,padding:"12px 28px",borderBottom:"1px solid #1e293b",flexShrink:0,flexWrap:"wrap"},
+  searchInput:{flex:1,minWidth:160,background:"#1e293b",border:"1px solid #334155",borderRadius:8,color:"#e2e8f0",padding:"7px 12px",fontSize:13},
+  select:{background:"#1e293b",border:"1px solid #334155",borderRadius:8,color:"#e2e8f0",padding:"7px 10px",fontSize:12},
+  dashGrid:{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:14},
+  card:{background:"#0d1321",border:"1px solid #1e293b",borderRadius:12,padding:18},
+  cardTitle:{fontSize:13,fontWeight:600,color:"#94a3b8",margin:0},
+  kpiCard:{background:"#0d1321",border:"1px solid #1e293b",borderRadius:12,padding:"16px",gridColumn:"span 1"},
+  table:{width:"100%",borderCollapse:"collapse",fontSize:12},
+  th:{textAlign:"left",padding:"8px 10px",color:"#475569",fontWeight:500,borderBottom:"1px solid #1e293b",whiteSpace:"nowrap"},
+  td:{padding:"9px 10px",borderBottom:"1px solid #0f172a",color:"#cbd5e1",whiteSpace:"nowrap"},
+  tr:{transition:"background .15s",cursor:"default"},
+  alertRow:{display:"flex",gap:16,padding:"8px 0",borderBottom:"1px solid #1e293b",flexWrap:"wrap",fontSize:13,alignItems:"center"},
+  alertChip:{background:"#1a0a0a",border:"1px solid #7f1d1d",borderRadius:8,padding:"6px 12px",fontSize:12,color:"#fca5a5"},
+  overlay:{position:"fixed",inset:0,background:"rgba(0,0,0,.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000},
+  modal:{background:"#0d1321",border:"1px solid #1e293b",borderRadius:16,padding:24,width:"90%",maxWidth:720,maxHeight:"90vh",overflow:"auto"},
+  modalHeader:{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20},
+  closeBtn:{background:"none",border:"none",color:"#64748b",fontSize:18,cursor:"pointer",padding:4},
+  modalGrid:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"12px 16px"},
+  modalFooter:{display:"flex",justifyContent:"flex-end",gap:10,marginTop:20},
+  label:{display:"block",fontSize:11,color:"#64748b",marginBottom:4,fontWeight:500},
+  input:{width:"100%",background:"#1e293b",border:"1px solid #334155",borderRadius:8,color:"#e2e8f0",padding:"8px 10px",fontSize:13,boxSizing:"border-box"},
+  btnPrimary:{background:"linear-gradient(135deg,#3b82f6,#2563eb)",color:"#fff",border:"none",borderRadius:8,padding:"9px 18px",fontSize:13,fontWeight:600,cursor:"pointer"},
+  btnSecondary:{background:"#1e293b",color:"#94a3b8",border:"1px solid #334155",borderRadius:8,padding:"9px 18px",fontSize:13,cursor:"pointer"},
+  dropZone:{border:"2px dashed #1e293b",borderRadius:16,padding:"48px 24px",textAlign:"center",cursor:"pointer",transition:"all .2s"},
+};
